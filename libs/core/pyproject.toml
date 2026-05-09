@@ -82,6 +82,7 @@ test_integration = []
 constraint-dependencies = ["pygments>=2.20.0"]  # CVE-2026-4539
 
 [tool.uv.sources]
+crewai = { git = "https://github.com/crewAIInc/crewAI.git" }
 langchain-tests = { path = "../standard-tests" }
 langchain-text-splitters = { path = "../text-splitters" }
 
