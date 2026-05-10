@@ -11,10 +11,13 @@ from langchain_anthropic.optimizations import (
     apply_auto_cache_to_system,
     apply_auto_cache_to_tools,
 )
+from langchain_anthropic.token_budget import ModelTier, TokenBudgetRouter
 
 __all__ = [
     "AnthropicLLM",
     "ChatAnthropic",
+    "ModelTier",
+    "TokenBudgetRouter",
     "TokenUsageStats",
     "__version__",
     "apply_auto_cache_to_system",

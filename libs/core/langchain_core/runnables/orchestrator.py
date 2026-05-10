@@ -11,9 +11,8 @@ common failures:
 - **Persistent failures** – opens a circuit breaker so the connector is skipped
   until a recovery window expires.
 
-New connectors can be registered at runtime via :meth:`register`.  The
-orchestrator inspects incoming connector objects and adapts routing weight
-accordingly — no manual configuration required.
+New connectors can be registered at runtime via :meth:`ConnectorOrchestrator.register`.
+The orchestrator starts routing to them immediately — no restart needed.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ import threading
 import time
 from collections import deque
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_core.exceptions import ContextOverflowError
 from langchain_core.messages import BaseMessage
@@ -38,8 +37,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# How many tokens to shave off when recovering from a context-overflow error.
-# Expressed as a fraction of the current message list length.
+# Fraction of message history to remove on context-overflow recovery.
 _TRIM_FRACTION: float = 0.25
 _MIN_TRIM_MESSAGES: int = 1
 
@@ -50,11 +48,13 @@ _DEFAULT_MAX_RETRIES: int = 3
 _DEFAULT_BACKOFF_BASE: float = 2.0
 _DEFAULT_BACKOFF_MAX: float = 30.0
 
+_SUPPORTED_STRATEGIES: frozenset[str] = frozenset({"priority"})
+
 
 class _CircuitState(Enum):
-    CLOSED = auto()   # normal operation
-    OPEN = auto()     # connector suspended after repeated failures
-    HALF_OPEN = auto()  # testing if connector has recovered
+    CLOSED = auto()    # normal operation
+    OPEN = auto()      # connector suspended after repeated failures
+    HALF_OPEN = auto() # testing if connector has recovered
 
 
 class _ConnectorHealth:
@@ -72,7 +72,6 @@ class _ConnectorHealth:
         self._state = _CircuitState.CLOSED
         self._consecutive_failures = 0
         self._last_failure_time: float = 0.0
-        # Rolling window for success-rate tracking
         self._recent: deque[bool] = deque(maxlen=window)
 
     @property
@@ -88,7 +87,7 @@ class _ConnectorHealth:
         return self.state != _CircuitState.OPEN
 
     def _compute_success_rate(self) -> float:
-        """Compute success rate without acquiring the lock (caller must hold it)."""
+        """Return success rate; caller must hold `self._lock`."""
         if not self._recent:
             return 1.0
         return sum(self._recent) / len(self._recent)
@@ -118,7 +117,7 @@ class _ConnectorHealth:
                 self._state = _CircuitState.OPEN
 
     def summary(self) -> dict[str, Any]:
-        """Return a snapshot of the health metrics.
+        """Return a health snapshot.
 
         Returns:
             Dict with ``state``, ``consecutive_failures``, and ``success_rate``.
@@ -131,15 +130,17 @@ class _ConnectorHealth:
             }
 
 
-def _trim_messages_by_fraction(messages: list[BaseMessage], fraction: float) -> list[BaseMessage]:
+def _trim_messages_by_fraction(
+    messages: list[BaseMessage], fraction: float
+) -> list[BaseMessage]:
     """Remove the oldest *fraction* of messages, keeping at least one.
 
-    Preserves the first message when it is a `SystemMessage` so the model
-    context is not lost.  Never returns an empty list.
+    The first `SystemMessage` is always preserved.  The function never
+    returns an empty list.
 
     Args:
         messages: Current message list.
-        fraction: Proportion of messages to remove (0 < fraction < 1).
+        fraction: Proportion of non-system messages to remove (0 < fraction < 1).
 
     Returns:
         Trimmed message list with at least one message.
@@ -153,56 +154,53 @@ def _trim_messages_by_fraction(messages: list[BaseMessage], fraction: float) -> 
     non_system = messages[1:] if has_system else messages
     n = min(
         max(_MIN_TRIM_MESSAGES, math.ceil(len(non_system) * fraction)),
-        len(non_system) - 1,  # always keep the most recent non-system message
+        len(non_system) - 1,  # always keep the most recent message
     )
-    trimmed_non_system = non_system[n:]
-    return ([messages[0], *trimmed_non_system] if has_system else trimmed_non_system) or messages[-1:]
+    trimmed = non_system[n:]
+    return ([messages[0], *trimmed] if has_system else trimmed) or messages[-1:]
 
 
 class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
     """Autonomous, self-healing orchestrator for multiple LangChain connectors.
 
     Routes each invocation to the best available connector based on real-time
-    health scores.  Handles errors without caller intervention:
+    health scores.  Recovers from errors without caller intervention:
 
-    - **ContextOverflowError** → trims 25 % of message history and retries.
-    - **Any other exception** → records the failure, opens the circuit breaker
-      after `failure_threshold` consecutive errors, and fails over to the next
-      healthy connector.
+    - **ContextOverflowError** → trims 25 % of message history, retries
+      the *same* connector.
+    - **Any other exception** → records the failure, opens the circuit
+      breaker after `failure_threshold` consecutive errors, and fails over
+      to the next healthy connector.
 
-    New connectors can be added at runtime with :meth:`register`; the
-    orchestrator starts using them immediately.
+    New connectors can be added at runtime via :meth:`register`; the
+    orchestrator starts routing to them immediately.
 
     Example:
         ```python
         from langchain_anthropic import ChatAnthropic
         from langchain_core.runnables.orchestrator import ConnectorOrchestrator
 
-        orchestrator = ConnectorOrchestrator(
+        orch = ConnectorOrchestrator(
             connectors={
                 "claude": ChatAnthropic(model="claude-opus-4-7", auto_cache=True),
             },
             max_retries=3,
         )
 
-        # Works like any Runnable
-        response = orchestrator.invoke("Explain quantum entanglement.")
+        response = orch.invoke("Explain quantum entanglement.")
 
-        # Add a fallback connector at runtime
+        # Register a fallback at runtime — active immediately
         from langchain_openai import ChatOpenAI
-        orchestrator.register("openai", ChatOpenAI(model="gpt-4o"))
+        orch.register("openai", ChatOpenAI(model="gpt-4o"))
 
-        # Inspect connector health
-        print(orchestrator.health_report())
+        print(orch.health_report())
         ```
     """
 
-    # Pydantic-aware type declaration for RunnableSerializable
     model_config = {"arbitrary_types_allowed": True}
 
-    # These are intentionally NOT Pydantic fields so they can hold arbitrary
-    # Runnable instances without serialisation constraints.  We override
-    # __init__ to populate them.
+    # Instance attributes are stored as plain Python attributes (not Pydantic
+    # fields) because Runnable instances are not JSON-serialisable.
     _connectors: dict[str, Runnable]
     _health: dict[str, _ConnectorHealth]
     _priority: list[str]
@@ -210,12 +208,13 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
     _failure_threshold: int
     _recovery_timeout: float
     _max_retries: int
+    _strategy: str
 
     def __init__(
         self,
         connectors: dict[str, Runnable],
         *,
-        strategy: str = "priority",
+        strategy: Literal["priority"] = "priority",
         max_retries: int = _DEFAULT_MAX_RETRIES,
         failure_threshold: int = _DEFAULT_FAILURE_THRESHOLD,
         recovery_timeout: float = _DEFAULT_RECOVERY_TIMEOUT,
@@ -223,21 +222,31 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
         """Create an orchestrator from a named pool of connectors.
 
         Args:
-            connectors: Mapping of connector name → `Runnable`.  The iteration
-                order defines the default routing priority.
-            strategy: Routing strategy.  Currently only `'priority'` is
-                supported (try connectors in registration order, skip unhealthy
-                ones).
-            max_retries: Maximum total attempts across all connectors before
-                raising the last exception.
-            failure_threshold: Number of consecutive failures that open a
+            connectors: Mapping of connector name → `Runnable`.  Iteration
+                order sets the default routing priority.
+            strategy: Routing strategy.  `'priority'` (the only supported
+                value) tries connectors in registration order and skips
+                unhealthy ones.
+            max_retries: Maximum number of full passes through the connector
+                pool before the last exception is re-raised.
+            failure_threshold: Consecutive failures required to open a
                 connector's circuit breaker.
-            recovery_timeout: Seconds after which an open circuit breaker
-                transitions to HALF_OPEN for a recovery probe.
+            recovery_timeout: Seconds until an open circuit breaker transitions
+                to HALF_OPEN for a recovery probe.
+
+        Raises:
+            ValueError: If `connectors` is empty or `strategy` is not
+                `'priority'`.
         """
         super().__init__()
         if not connectors:
             msg = "At least one connector must be provided."
+            raise ValueError(msg)
+        if strategy not in _SUPPORTED_STRATEGIES:
+            msg = (
+                f"Unsupported strategy '{strategy}'. "
+                f"Supported values: {sorted(_SUPPORTED_STRATEGIES)}"
+            )
             raise ValueError(msg)
         self._connectors = dict(connectors)
         self._priority = list(connectors)
@@ -258,10 +267,9 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
     def register(self, name: str, connector: Runnable) -> None:
         """Add or replace a connector in the pool.
 
-        Newly registered connectors start with a clean health record and are
-        appended to the end of the routing priority list (unless a connector
-        with the same name already exists, in which case only the runnable and
-        health are reset).
+        The connector starts with a fresh health record.  If `name` already
+        exists only the runnable and health are reset; its position in the
+        priority list is preserved.
 
         Args:
             name: Unique identifier for the connector.
@@ -299,10 +307,10 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
     # ------------------------------------------------------------------
 
     def health_report(self) -> dict[str, Any]:
-        """Return a snapshot of health metrics for every registered connector.
+        """Return a snapshot of health metrics for every connector.
 
         Returns:
-            Dict mapping connector name → health summary dict with keys
+            Dict mapping connector name → health summary with keys
             ``state``, ``consecutive_failures``, and ``success_rate``.
         """
         with self._lock:
@@ -313,33 +321,54 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
     # ------------------------------------------------------------------
 
     def _ordered_connectors(self) -> list[tuple[str, Runnable]]:
-        """Return connectors sorted by priority, skipping OPEN circuit breakers."""
+        """Return (name, runnable) pairs sorted by priority.
+
+        Healthy connectors come first; OPEN-circuit ones are placed at the
+        end (last-resort fallback).  A snapshot of the registry is taken
+        under the lock; the returned list operates on local copies so
+        concurrent `register`/`unregister` calls cannot cause KeyErrors.
+        """
         with self._lock:
             priority = list(self._priority)
             connectors = dict(self._connectors)
             health = dict(self._health)
 
-        available = [(n, connectors[n]) for n in priority if health[n].is_available]
-        suspended = [(n, connectors[n]) for n in priority if not health[n].is_available]
-        # Put suspended connectors last so they still get a chance if all others fail
+        # Use key existence checks in case a connector was unregistered
+        # between the lock release and the list comprehension.
+        available = [
+            (n, connectors[n])
+            for n in priority
+            if n in health and n in connectors and health[n].is_available
+        ]
+        suspended = [
+            (n, connectors[n])
+            for n in priority
+            if n in health and n in connectors and not health[n].is_available
+        ]
         return available + suspended
 
+    def _record_success(self, name: str) -> None:
+        """Record a success, ignoring stale names after unregister."""
+        health = self._health.get(name)
+        if health is not None:
+            health.record_success()
+
+    def _record_failure(self, name: str) -> None:
+        """Record a failure, ignoring stale names after unregister."""
+        health = self._health.get(name)
+        if health is not None:
+            health.record_failure()
+
     def _backoff(self, attempt: int) -> None:
-        delay = min(
-            _DEFAULT_BACKOFF_MAX,
-            _DEFAULT_BACKOFF_BASE ** attempt,
-        )
-        time.sleep(delay)
+        time.sleep(min(_DEFAULT_BACKOFF_MAX, _DEFAULT_BACKOFF_BASE ** attempt))
 
     async def _abackoff(self, attempt: int) -> None:
-        delay = min(
-            _DEFAULT_BACKOFF_MAX,
-            _DEFAULT_BACKOFF_BASE ** attempt,
+        await asyncio.sleep(
+            min(_DEFAULT_BACKOFF_MAX, _DEFAULT_BACKOFF_BASE ** attempt)
         )
-        await asyncio.sleep(delay)
 
     def _resolve_messages(self, input_: Input) -> list[BaseMessage] | None:
-        """Extract message list from input if possible, else return None."""
+        """Extract a message list from *input_* when possible."""
         if isinstance(input_, list) and all(isinstance(m, BaseMessage) for m in input_):
             return input_  # type: ignore[return-value]
         return None
@@ -365,7 +394,7 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
             The output from the first successful connector.
 
         Raises:
-            Exception: Re-raises the last exception when all connectors and
+            Exception: The last exception raised when all connectors and
                 retries are exhausted.
         """
         config = ensure_config(config)
@@ -377,38 +406,33 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
             for name, connector in self._ordered_connectors():
                 try:
                     result = connector.invoke(current_input, config, **kwargs)
-                    self._health[name].record_success()
+                    self._record_success(name)
                     return result
                 except ContextOverflowError as exc:
-                    self._health[name].record_failure()
+                    self._record_failure(name)
                     logger.warning(
-                        "Connector '%s' hit context overflow; trimming history (attempt %d).",
-                        name,
-                        attempt + 1,
+                        "Connector '%s' context overflow; trimming (attempt %d).",
+                        name, attempt + 1,
                     )
                     messages = self._resolve_messages(current_input)
                     if messages and len(messages) > 1:
                         current_input = _trim_messages_by_fraction(  # type: ignore[assignment]
                             messages, _TRIM_FRACTION
                         )
-                        last_exc = exc
-                        # Retry the *same* connector with shorter context
                         try:
                             result = connector.invoke(current_input, config, **kwargs)
-                            self._health[name].record_success()
+                            self._record_success(name)
                             return result
                         except Exception as inner_exc:
-                            self._health[name].record_failure()
+                            self._record_failure(name)
                             last_exc = inner_exc
                     else:
                         last_exc = exc
                 except Exception as exc:
-                    self._health[name].record_failure()
+                    self._record_failure(name)
                     logger.warning(
                         "Connector '%s' failed (attempt %d): %s",
-                        name,
-                        attempt + 1,
-                        exc,
+                        name, attempt + 1, exc,
                     )
                     last_exc = exc
 
@@ -440,7 +464,7 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
             The output from the first successful connector.
 
         Raises:
-            Exception: Re-raises the last exception when all retries fail.
+            Exception: The last exception when all retries are exhausted.
         """
         config = ensure_config(config)
         attempt = 0
@@ -451,37 +475,33 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
             for name, connector in self._ordered_connectors():
                 try:
                     result = await connector.ainvoke(current_input, config, **kwargs)
-                    self._health[name].record_success()
+                    self._record_success(name)
                     return result
                 except ContextOverflowError as exc:
-                    self._health[name].record_failure()
+                    self._record_failure(name)
                     logger.warning(
-                        "Connector '%s' hit context overflow; trimming history (attempt %d).",
-                        name,
-                        attempt + 1,
+                        "Connector '%s' context overflow; trimming (attempt %d).",
+                        name, attempt + 1,
                     )
                     messages = self._resolve_messages(current_input)
                     if messages and len(messages) > 1:
                         current_input = _trim_messages_by_fraction(  # type: ignore[assignment]
                             messages, _TRIM_FRACTION
                         )
-                        last_exc = exc
                         try:
                             result = await connector.ainvoke(current_input, config, **kwargs)
-                            self._health[name].record_success()
+                            self._record_success(name)
                             return result
                         except Exception as inner_exc:
-                            self._health[name].record_failure()
+                            self._record_failure(name)
                             last_exc = inner_exc
                     else:
                         last_exc = exc
                 except Exception as exc:
-                    self._health[name].record_failure()
+                    self._record_failure(name)
                     logger.warning(
                         "Connector '%s' failed (attempt %d): %s",
-                        name,
-                        attempt + 1,
-                        exc,
+                        name, attempt + 1, exc,
                     )
                     last_exc = exc
 
@@ -493,7 +513,7 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
         raise last_exc
 
     # ------------------------------------------------------------------
-    # Streaming
+    # Synchronous streaming
     # ------------------------------------------------------------------
 
     def stream(
@@ -502,10 +522,12 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[Output]:
-        """Stream from the first available connector, falling back to `invoke`.
+        """Stream from the first available connector.
 
-        If the primary connector does not support streaming, `invoke` is called
-        and the single result is yielded.
+        Chunks are yielded as they arrive — no buffering.  Falls over to
+        the next connector when the current one raises before yielding the
+        first chunk.  A partial stream that fails mid-way re-raises without
+        attempting failover (some output has already been sent to the caller).
 
         Args:
             input: Input to the connectors.
@@ -514,20 +536,34 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
 
         Yields:
             Output chunks from the selected connector.
+
+        Raises:
+            RuntimeError: When all connectors fail before yielding any chunk.
         """
         config = ensure_config(config)
         for name, connector in self._ordered_connectors():
             try:
-                chunks = list(connector.stream(input, config, **kwargs))
-                self._health[name].record_success()
-                yield from chunks
+                yielded = False
+                for chunk in connector.stream(input, config, **kwargs):
+                    yielded = True
+                    yield chunk
+                self._record_success(name)
                 return
             except Exception as exc:
-                self._health[name].record_failure()
+                if yielded:
+                    # Partial stream already started — re-raise so the caller
+                    # isn't silently given an incomplete response.
+                    self._record_failure(name)
+                    raise
+                self._record_failure(name)
                 logger.warning("Connector '%s' stream failed: %s", name, exc)
 
         msg = "All connectors failed during streaming."
         raise RuntimeError(msg)
+
+    # ------------------------------------------------------------------
+    # Asynchronous streaming
+    # ------------------------------------------------------------------
 
     async def astream(
         self,
@@ -537,6 +573,9 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
     ) -> AsyncIterator[Output]:
         """Async streaming version of :meth:`stream`.
 
+        Chunks are yielded as they arrive — no buffering.  Falls over to the
+        next connector when the current one raises before yielding any chunk.
+
         Args:
             input: Input to the connectors.
             config: Optional `RunnableConfig`.
@@ -544,19 +583,24 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
 
         Yields:
             Output chunks from the selected connector.
+
+        Raises:
+            RuntimeError: When all connectors fail before yielding any chunk.
         """
         config = ensure_config(config)
         for name, connector in self._ordered_connectors():
             try:
-                chunks: list[Output] = []
+                yielded = False
                 async for chunk in connector.astream(input, config, **kwargs):
-                    chunks.append(chunk)
-                self._health[name].record_success()
-                for chunk in chunks:
+                    yielded = True
                     yield chunk
+                self._record_success(name)
                 return
             except Exception as exc:
-                self._health[name].record_failure()
+                if yielded:
+                    self._record_failure(name)
+                    raise
+                self._record_failure(name)
                 logger.warning("Connector '%s' astream failed: %s", name, exc)
 
         msg = "All connectors failed during async streaming."
@@ -568,7 +612,7 @@ class ConnectorOrchestrator(RunnableSerializable[Input, Output]):
 
     @classmethod
     def is_lc_serializable(cls) -> bool:
-        """Return `False` – connector instances are not JSON-serialisable."""
+        """Return `False` — connector instances are not JSON-serialisable."""
         return False
 
     @classmethod

@@ -213,6 +213,41 @@ def test_no_auto_cache_leaves_system_unchanged() -> None:
     assert isinstance(system, str)
 
 
+def test_auto_cache_system_with_multiple_text_blocks_only_last_tagged() -> None:
+    """When there are multiple text blocks, cache_control must land on the last one."""
+    model = _make_model(auto_cache=True)
+    half = _MIN_CACHE_CHARS // 2
+    messages = [
+        SystemMessage(content=[
+            {"type": "text", "text": "x" * half},
+            {"type": "text", "text": "y" * half},
+        ]),
+        HumanMessage(content="hello"),
+    ]
+    payload = model._get_request_payload(messages)
+    system = payload.get("system")
+    assert isinstance(system, list)
+    # First block must NOT have cache_control
+    assert "cache_control" not in system[0]
+    # Last block must have cache_control
+    assert system[-1].get("cache_control") == {"type": "ephemeral"}
+
+
+def test_apply_auto_cache_to_tools_early_return_when_already_cached() -> None:
+    """If the last tool already has cache_control, the original list is returned."""
+    tools = [{"name": "t", "cache_control": {"type": "ephemeral"}}]
+    result = apply_auto_cache_to_tools(tools)
+    assert result is tools  # exact same object — no copy made
+
+
+def test_apply_auto_cache_to_system_non_text_blocks_unchanged() -> None:
+    """Only text blocks are eligible for cache_control; image-only lists return unchanged."""
+    blocks = [{"type": "image", "source": {"type": "url", "url": "https://example.com/img.jpg"}}]
+    # Total char estimate is 0 (no text field) → below threshold → returned as-is
+    result = apply_auto_cache_to_system(blocks)
+    assert result is blocks
+
+
 def test_auto_cache_injects_into_tools() -> None:
     """auto_cache must tag the last tool definition in the payload."""
     from langchain_anthropic.chat_models import convert_to_anthropic_tool

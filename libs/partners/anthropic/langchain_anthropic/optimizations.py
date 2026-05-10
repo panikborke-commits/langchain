@@ -40,6 +40,11 @@ def apply_auto_cache_to_system(
     If the total estimated size is below `_MIN_CACHE_CHARS` the value is
     returned unchanged so we never pay the caching overhead for tiny prompts.
 
+    For list-type system content, the breakpoint is placed on the last *text*
+    block that does not already carry `cache_control`.  If only non-text blocks
+    (e.g. images) are present, no breakpoint is added — Anthropic only supports
+    caching on text blocks in the system parameter.
+
     Args:
         system: The Anthropic system parameter – either a plain string, a list
             of content blocks, or `None`.
@@ -61,7 +66,9 @@ def apply_auto_cache_to_system(
         return system
 
     # Place a breakpoint on the last text block that does not already have one.
-    result = [dict(b) for b in system]  # shallow copy so we don't mutate caller
+    # Shallow copy is sufficient: Anthropic block values are scalars or
+    # already-serialised strings; we only add a top-level key.
+    result = [dict(b) for b in system]
     for block in reversed(result):
         if block.get("type") == "text" and "cache_control" not in block:
             block["cache_control"] = _EPHEMERAL
@@ -78,25 +85,34 @@ def apply_auto_cache_to_tools(
     candidates.  Adding a breakpoint to the final entry covers the entire
     tool list in one shot.
 
+    If the last tool already carries a `cache_control` key the list is returned
+    unchanged (no copy, no overhead).
+
     Args:
         tools: List of Anthropic tool definition dicts.
 
     Returns:
-        The (possibly modified) tools list.
+        The (possibly modified) tools list.  The original is never mutated.
     """
     if not tools:
         return tools
 
+    # Early exit when the last tool is already tagged — avoids an unnecessary copy.
+    if "cache_control" in tools[-1]:
+        return tools
+
     result = [dict(t) for t in tools]
-    last = result[-1]
-    if "cache_control" not in last:
-        last["cache_control"] = _EPHEMERAL
+    result[-1]["cache_control"] = _EPHEMERAL
     return result
 
 
 @dataclass
 class TokenUsageStats:
-    """Accumulated token usage across multiple invocations."""
+    """Accumulated token usage across multiple invocations.
+
+    Thread-safe: all attribute reads and writes are protected by an internal
+    lock, including computed properties.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
@@ -124,29 +140,39 @@ class TokenUsageStats:
     @property
     def total_tokens(self) -> int:
         """Sum of all input and output tokens."""
-        return self.input_tokens + self.output_tokens
+        with self._lock:
+            return self.input_tokens + self.output_tokens
 
     @property
     def cache_hit_rate(self) -> float:
         """Fraction of input tokens served from cache (0.0 – 1.0)."""
-        total_input = self.input_tokens + self.cache_read_tokens
-        if total_input == 0:
-            return 0.0
-        return self.cache_read_tokens / total_input
+        with self._lock:
+            total_input = self.input_tokens + self.cache_read_tokens
+            if total_input == 0:
+                return 0.0
+            return self.cache_read_tokens / total_input
 
     def summary(self) -> dict[str, Any]:
-        """Return a snapshot of all counters.
+        """Return a consistent snapshot of all counters.
+
+        All values are read under the same lock acquisition so the returned
+        dict is always internally consistent.
 
         Returns:
             A plain dict with keys ``input_tokens``, ``output_tokens``,
             ``cache_creation_tokens``, ``cache_read_tokens``,
             ``total_tokens``, and ``cache_hit_rate``.
         """
-        return {
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_creation_tokens": self.cache_creation_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "total_tokens": self.total_tokens,
-            "cache_hit_rate": self.cache_hit_rate,
-        }
+        with self._lock:
+            total_input = self.input_tokens + self.cache_read_tokens
+            hit_rate = (
+                self.cache_read_tokens / total_input if total_input else 0.0
+            )
+            return {
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
+                "cache_creation_tokens": self.cache_creation_tokens,
+                "cache_read_tokens": self.cache_read_tokens,
+                "total_tokens": self.input_tokens + self.output_tokens,
+                "cache_hit_rate": hit_rate,
+            }

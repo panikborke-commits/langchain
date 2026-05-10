@@ -2,9 +2,14 @@ from langchain_anthropic import __all__
 
 EXPECTED_ALL = [
     "__version__",
-    "ChatAnthropic",
-    "convert_to_anthropic_tool",
     "AnthropicLLM",
+    "ChatAnthropic",
+    "ModelTier",
+    "TokenBudgetRouter",
+    "TokenUsageStats",
+    "apply_auto_cache_to_system",
+    "apply_auto_cache_to_tools",
+    "convert_to_anthropic_tool",
 ]
 
 

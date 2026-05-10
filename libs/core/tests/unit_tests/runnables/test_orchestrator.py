@@ -293,3 +293,97 @@ def test_stream_all_fail_raises() -> None:
     )
     with pytest.raises(RuntimeError, match="All connectors failed"):
         list(orch.stream("input"))
+
+
+# ---------------------------------------------------------------------------
+# Strategy validation
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_strategy_raises() -> None:
+    with pytest.raises(ValueError, match="Unsupported strategy"):
+        ConnectorOrchestrator(connectors={"a": _ok_runnable()}, strategy="round_robin")  # type: ignore[arg-type]
+
+
+def test_valid_strategy_priority() -> None:
+    orch = ConnectorOrchestrator(connectors={"a": _ok_runnable()}, strategy="priority")
+    assert orch._strategy == "priority"
+
+
+# ---------------------------------------------------------------------------
+# Async streaming
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_astream_yields_chunks() -> None:
+    orch = ConnectorOrchestrator(connectors={"a": _ok_runnable("chunk")})
+    chunks = [c async for c in orch.astream("input")]
+    assert chunks == ["chunk"]
+
+
+@pytest.mark.asyncio
+async def test_astream_fallback_on_error() -> None:
+    orch = ConnectorOrchestrator(
+        connectors={
+            "bad": _failing_runnable(),
+            "good": _ok_runnable("async-stream-chunk"),
+        },
+        max_retries=2,
+    )
+    chunks = [c async for c in orch.astream("input")]
+    assert "async-stream-chunk" in chunks
+
+
+@pytest.mark.asyncio
+async def test_astream_all_fail_raises() -> None:
+    orch = ConnectorOrchestrator(
+        connectors={"a": _failing_runnable()},
+        max_retries=1,
+    )
+    with pytest.raises(RuntimeError, match="All connectors failed"):
+        async for _ in orch.astream("input"):
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Async context-overflow recovery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_context_overflow_triggers_trim_and_retry() -> None:
+    call_count = 0
+
+    def _model(messages: Any) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ContextOverflowError("too long")
+        return "ok after trim"
+
+    orch = ConnectorOrchestrator(
+        connectors={"llm": RunnableLambda(_model)},
+        max_retries=2,
+    )
+    msgs = [HumanMessage(content=str(i)) for i in range(10)]
+    result = await orch.ainvoke(msgs)
+    assert result == "ok after trim"
+    assert call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Defensive record_success/failure with stale names
+# ---------------------------------------------------------------------------
+
+
+def test_record_success_stale_name_is_silent() -> None:
+    """_record_success on an unknown name must not raise."""
+    orch = ConnectorOrchestrator(connectors={"a": _ok_runnable()})
+    orch._record_success("nonexistent")  # should not raise
+
+
+def test_record_failure_stale_name_is_silent() -> None:
+    """_record_failure on an unknown name must not raise."""
+    orch = ConnectorOrchestrator(connectors={"a": _ok_runnable()})
+    orch._record_failure("nonexistent")  # should not raise
