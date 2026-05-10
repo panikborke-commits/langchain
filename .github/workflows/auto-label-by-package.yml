@@ -40,6 +40,7 @@ jobs:
               "langchain-classic": "langchain-classic",
               "langchain-core": "core",
               "langchain-model-profiles": "model-profiles",
+              "langchain-openclaw": "openclaw",
               "langchain-tests": "standard-tests",
               "langchain-text-splitters": "text-splitters",
               "langchain-chroma": "chroma",

@@ -1,7 +1,7 @@
 # Makefile for libs/ directory
 # Contains targets that operate across multiple packages
 
-LANGCHAIN_DIRS = core text-splitters langchain langchain_v1 model-profiles
+LANGCHAIN_DIRS = core text-splitters langchain langchain_v1 model-profiles openclaw
 
 .PHONY: lock check-lock
 

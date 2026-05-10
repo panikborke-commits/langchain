@@ -56,6 +56,7 @@ body:
         - label: langchain-classic
         - label: langchain-core
         - label: langchain-model-profiles
+        - label: langchain-openclaw
         - label: langchain-tests
         - label: langchain-text-splitters
         - label: langchain-chroma

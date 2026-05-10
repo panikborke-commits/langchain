@@ -28,7 +28,7 @@
 #   * hotfix     — urgent fix
 #
 # Allowed Scope(s) (optional):
-#   core, langchain, langchain-classic, model-profiles,
+#   core, langchain, langchain-classic, model-profiles, openclaw,
 #   standard-tests, text-splitters, docs, anthropic, chroma, deepseek, exa,
 #   fireworks, groq, huggingface, mistralai, nomic, ollama, openai,
 #   perplexity, qdrant, xai, infra, deps, partners
@@ -99,6 +99,7 @@ jobs:
             langchain
             langchain-classic
             model-profiles
+            openclaw
             standard-tests
             text-splitters
             docs
