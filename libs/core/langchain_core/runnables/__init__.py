@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     )
     from langchain_core.runnables.fallbacks import RunnableWithFallbacks
     from langchain_core.runnables.history import RunnableWithMessageHistory
+    from langchain_core.runnables.orchestrator import ConnectorOrchestrator
     from langchain_core.runnables.passthrough import (
         RunnableAssign,
         RunnablePassthrough,
@@ -66,6 +67,7 @@ __all__ = (
     "ConfigurableFieldMultiOption",
     "ConfigurableFieldSingleOption",
     "ConfigurableFieldSpec",
+    "ConnectorOrchestrator",
     "RouterInput",
     "RouterRunnable",
     "Runnable",
@@ -110,6 +112,7 @@ _dynamic_imports = {
     "run_in_executor": "config",
     "RunnableWithFallbacks": "fallbacks",
     "RunnableWithMessageHistory": "history",
+    "ConnectorOrchestrator": "orchestrator",
     "RunnableAssign": "passthrough",
     "RunnablePassthrough": "passthrough",
     "RunnablePick": "passthrough",
