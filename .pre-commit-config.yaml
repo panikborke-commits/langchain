@@ -123,3 +123,9 @@ repos:
         entry: make -C libs/langchain_v1 check_version
         files: ^libs/langchain_v1/(pyproject\.toml|langchain/__init__\.py)$
         pass_filenames: false
+      - id: sync-claude-agents-md
+        name: CLAUDE.md and AGENTS.md must remain identical
+        language: system
+        entry: bash -c 'if ! diff -q CLAUDE.md AGENTS.md > /dev/null 2>&1; then echo "ERROR: CLAUDE.md and AGENTS.md must remain identical. Update both files simultaneously (Claude Code reads CLAUDE.md, Codex reads AGENTS.md)."; exit 1; fi'
+        files: ^(CLAUDE|AGENTS)\.md$
+        pass_filenames: false
