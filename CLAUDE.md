@@ -32,6 +32,12 @@ langchain/
 - **Integration layer** (`partners/`): Third-party service integrations. Note that this monorepo is not exhaustive of all LangChain integrations; some are maintained in separate repos, such as `langchain-ai/langchain-google` and `langchain-ai/langchain-aws`. Usually these repos are cloned at the same level as this monorepo, so if needed, you can refer to their code directly by navigating to `../langchain-google/` from this monorepo.
 - **Testing layer** (`standard-tests/`): Standardized integration tests for partner integrations
 
+### External repositories
+
+The following external repositories are cloned globally at the parent level (`/home/user/`) for reference during development:
+
+- **AgenticHealthAI/Awesome-AI-Agents-for-Healthcare** (`../Awesome-AI-Agents-for-Healthcare/`): Curated list of research papers, open-source projects, and resources on AI agents applied to healthcare. Useful reference when working on healthcare-related integrations or agent implementations.
+
 ### Development tools & commands
 
 - `uv` – Fast Python package installer and resolver (replaces pip/poetry)
