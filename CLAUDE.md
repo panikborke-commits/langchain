@@ -15,14 +15,28 @@ langchain/
 │   ├── langchain/        # `langchain-classic` (legacy, no new features)
 │   ├── langchain_v1/     # Actively maintained `langchain` package
 │   ├── partners/         # Third-party integrations
-│   │   ├── openai/       # OpenAI models and embeddings
 │   │   ├── anthropic/    # Anthropic (Claude) integration
+│   │   ├── chroma/       # Chroma vector store
+│   │   ├── deepseek/     # DeepSeek models
+│   │   ├── exa/          # Exa search integration
+│   │   ├── fireworks/    # Fireworks AI integration
+│   │   ├── groq/         # Groq inference
+│   │   ├── huggingface/  # HuggingFace models and embeddings
+│   │   ├── mistralai/    # Mistral AI models
+│   │   ├── nomic/        # Nomic embeddings
 │   │   ├── ollama/       # Local model support
+│   │   ├── openai/       # OpenAI models and embeddings
+│   │   ├── openrouter/   # OpenRouter multi-provider gateway
+│   │   ├── perplexity/   # Perplexity AI integration
+│   │   ├── qdrant/       # Qdrant vector store
+│   │   ├── xai/          # xAI (Grok) integration
 │   │   └── ... (other integrations maintained by the LangChain team)
 │   ├── text-splitters/   # Document chunking utilities
 │   ├── standard-tests/   # Shared test suite for integrations
 │   ├── model-profiles/   # Model configuration profiles
+├── .devcontainer/        # Dev container configuration for GitHub Codespaces and Docker
 ├── .github/              # CI/CD workflows and templates
+├── .mcp.json             # MCP server configuration (see "MCP servers" below)
 ├── .vscode/              # VSCode IDE standard settings and recommended extensions
 └── README.md             # Information about LangChain
 ```
@@ -285,6 +299,17 @@ When adding a new partner package, update these files:
 ## GitHub Actions & Workflows
 
 This repository require actions to be pinned to a full-length commit SHA. Attempting to use a tag will fail. Use the `gh` cli to query. Verify tags are not annotated tag objects (which would need dereferencing).
+
+## MCP servers
+
+The repository ships a `.mcp.json` file that configures two documentation MCP servers for use with Claude and other MCP-aware tools:
+
+| Server name          | URL                                   | Purpose                          |
+|----------------------|---------------------------------------|----------------------------------|
+| `docs-langchain`     | `https://docs.langchain.com/mcp`      | Narrative docs and guides        |
+| `reference-langchain`| `https://reference.langchain.com/mcp` | API reference documentation      |
+
+Prefer using the local documentation install and file-search tools for best results. Fall back to these MCP servers for programmatic or remote access.
 
 ## Additional resources
 
