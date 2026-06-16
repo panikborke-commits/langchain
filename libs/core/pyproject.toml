@@ -82,6 +82,7 @@ test_integration = []
 constraint-dependencies = ["pygments>=2.20.0"]  # CVE-2026-4539
 
 [tool.uv.sources]
+hermes-agent = { git = "https://github.com/NousResearch/hermes-agent.git" }
 langchain-tests = { path = "../standard-tests" }
 langchain-text-splitters = { path = "../text-splitters" }
 
