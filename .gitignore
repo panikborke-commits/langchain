@@ -166,3 +166,6 @@ virtualenv/
 scratch/
 
 .langgraph_api/
+
+# graphify knowledge graph build output
+graphify-out/
