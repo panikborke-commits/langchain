@@ -44,6 +44,24 @@ if TYPE_CHECKING:
     )
     from langchain_core.runnables.fallbacks import RunnableWithFallbacks
     from langchain_core.runnables.history import RunnableWithMessageHistory
+    from langchain_core.runnables.free_models import (
+        FREE_CODING_MODELS,
+        FreeModelEntry,
+        by_provider,
+        by_tag,
+        by_tier,
+        probe_endpoints,
+    )
+    from langchain_core.runnables.health_aware_orchestrator import (
+        HealthAwareOrchestrator,
+        build_free_model_orchestrator,
+    )
+    from langchain_core.runnables.health_check import (
+        EndpointHealthChecker,
+        PingResult,
+        StabilityMetrics,
+    )
+    from langchain_core.runnables.orchestrator import ConnectorOrchestrator
     from langchain_core.runnables.passthrough import (
         RunnableAssign,
         RunnablePassthrough,
@@ -66,6 +84,18 @@ __all__ = (
     "ConfigurableFieldMultiOption",
     "ConfigurableFieldSingleOption",
     "ConfigurableFieldSpec",
+    "ConnectorOrchestrator",
+    "EndpointHealthChecker",
+    "FREE_CODING_MODELS",
+    "FreeModelEntry",
+    "HealthAwareOrchestrator",
+    "PingResult",
+    "StabilityMetrics",
+    "build_free_model_orchestrator",
+    "by_provider",
+    "by_tag",
+    "by_tier",
+    "probe_endpoints",
     "RouterInput",
     "RouterRunnable",
     "Runnable",
@@ -110,6 +140,18 @@ _dynamic_imports = {
     "run_in_executor": "config",
     "RunnableWithFallbacks": "fallbacks",
     "RunnableWithMessageHistory": "history",
+    "ConnectorOrchestrator": "orchestrator",
+    "EndpointHealthChecker": "health_check",
+    "FREE_CODING_MODELS": "free_models",
+    "FreeModelEntry": "free_models",
+    "HealthAwareOrchestrator": "health_aware_orchestrator",
+    "PingResult": "health_check",
+    "StabilityMetrics": "health_check",
+    "build_free_model_orchestrator": "health_aware_orchestrator",
+    "by_provider": "free_models",
+    "by_tag": "free_models",
+    "by_tier": "free_models",
+    "probe_endpoints": "free_models",
     "RunnableAssign": "passthrough",
     "RunnablePassthrough": "passthrough",
     "RunnablePick": "passthrough",

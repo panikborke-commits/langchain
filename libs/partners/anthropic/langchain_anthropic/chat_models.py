@@ -64,6 +64,10 @@ from langchain_anthropic._client_utils import (
 )
 from langchain_anthropic._compat import _convert_from_v1_to_anthropic
 from langchain_anthropic.data._profiles import _PROFILES
+from langchain_anthropic.optimizations import (
+    apply_auto_cache_to_system,
+    apply_auto_cache_to_tools,
+)
 from langchain_anthropic.output_parsers import extract_tool_calls
 
 _message_type_lookups = {
@@ -1027,6 +1031,39 @@ class ChatAnthropic(BaseChatModel):
     docs for more information.
     """
 
+    auto_cache: bool = False
+    """Automatically apply prompt-cache breakpoints to reduce token costs.
+
+    When `True`, `cache_control` is injected into:
+
+    - The **system message** – if the estimated content size is ≥ 1 024 tokens
+      (≈ 4 096 characters).  Caching the system prompt saves on every
+      subsequent turn that reuses the same prompt.
+    - **Tool definitions** – a single breakpoint on the last tool covers all
+      tool schemas, so repeated calls with the same tool set skip re-encoding
+      them.
+
+    This is a model-level convenience alternative to the
+    `AnthropicPromptCachingMiddleware` (which requires the full `langchain`
+    agent framework).  Both can coexist; when both are active the middleware's
+    breakpoints are applied first and `auto_cache` adds any that are missing.
+
+    See Anthropic's
+    [prompt caching docs](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+    for pricing and minimum cacheable sizes.
+
+    Example:
+
+    .. code-block:: python
+
+        from langchain_anthropic import ChatAnthropic
+
+        model = ChatAnthropic(
+            model="claude-opus-4-7",
+            auto_cache=True,
+        )
+    """
+
     @property
     def _llm_type(self) -> str:
         """Return type of chat model."""
@@ -1357,6 +1394,17 @@ class ChatAnthropic(BaseChatModel):
                     payload["betas"] = [*payload["betas"], required_beta]
             else:
                 payload["betas"] = [required_beta]
+
+        # Auto-caching: inject cache_control breakpoints without caller boilerplate.
+        # Only applied for the direct Anthropic transport; Bedrock and other
+        # subclasses manage breakpoints via their own mechanisms.
+        if self.auto_cache and _is_direct_anthropic_llm_type(
+            getattr(self, "_llm_type", None)
+        ):
+            if payload.get("system") is not None:
+                payload["system"] = apply_auto_cache_to_system(payload["system"])
+            if payload.get("tools"):
+                payload["tools"] = apply_auto_cache_to_tools(payload["tools"])
 
         return {k: v for k, v in payload.items() if v is not None}
 
