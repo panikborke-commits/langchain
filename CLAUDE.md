@@ -311,7 +311,36 @@ The repository ships a `.mcp.json` file that configures two documentation MCP se
 
 Prefer using the local documentation install and file-search tools for best results. Fall back to these MCP servers for programmatic or remote access.
 
+## Agent self-evolution
+
+This monorepo uses **[Evolver](https://github.com/EvoMap/evolver)** for agent self-evolution with the Genome Evolution Protocol (GEP). Evolver is installed globally and available as the `evolver` CLI command.
+
+### Using Evolver
+
+Evolver is a GEP-powered self-evolution engine for AI agents. It turns ad hoc prompt tweaks into auditable, reusable evolution assets (genes and capsules).
+
+**Quick start:**
+
+```bash
+# Run evolver in any git-initialized project
+evolver
+
+# View available commands
+evolver --help
+```
+
+Common commands:
+
+- `evolver run` — Execute the evolution loop
+- `evolver solidify` — Solidify pending changes into assets
+- `evolver review` — Review evolution results
+- `evolver sync` — Sync with the Hub for asset management
+- `evolver setup-hooks` — Configure integration with your development platform
+
+For detailed documentation, see [Evolver documentation](https://evomap.ai/wiki) and the `SKILL.md` file in the evolver repository.
+
 ## Additional resources
 
 - **Documentation:** https://docs.langchain.com/oss/python/langchain/overview and source at https://github.com/langchain-ai/docs or `../docs/`. Prefer the local install and use file search tools for best results. If needed, use the docs MCP server as defined in `.mcp.json` for programmatic access.
 - **Contributing Guide:** [Contributing Guide](https://docs.langchain.com/oss/python/contributing/overview)
+- **Evolver Wiki:** [Agent self-evolution with GEP](https://evomap.ai/wiki)
