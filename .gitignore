@@ -166,3 +166,7 @@ virtualenv/
 scratch/
 
 .langgraph_api/
+
+# Evolver local state
+.evolver/
+memory/
