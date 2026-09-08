@@ -1,0 +1,22 @@
+[project]
+name = "langchain-with-agent-reach"
+version = "0.1.0"
+description = "LangChain monorepo with global Agent-Reach integration"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# Dependencies for the root workspace
+dependencies = [
+    "agent-reach>=1.5.0",
+]
+
+[tool.uv.optional-dependencies]
+all = [
+    "agent-reach[all]>=1.5.0",
+]
+dev = [
+    "agent-reach>=1.5.0",
+]
